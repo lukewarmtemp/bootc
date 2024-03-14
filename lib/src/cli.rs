@@ -361,9 +361,29 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
 
         let cancellable = gio::Cancellable::NONE;
         let checksum = "68dd808f0703709ddd7c24b0191a32c8e6d569a249d7c0c714712db3914636c5";
-        let result = ostree::Repo::load_file(repo, checksum, cancellable);
-        println!("{:?}", result);
+        // Ok((_, file_info, _)) => {
+        
+        // }
+        // let Ok((stream, content), error) = ostree::Repo::load_file(repo, checksum, cancellable);
+        let output = ostree::Repo::load_file(repo, checksum, cancellable).unwrap();
+        let content = output.0;
+        println!("{:?}", content);
 
+        use ostree_ext::prelude::InputStreamExtManual;
+        use std::io::Read;
+        let mut buffer = Vec::new();
+        let mut reader = content.unwrap().into_read();
+        reader.read_to_end(&mut buffer)?;
+        let s = match std::str::from_utf8(&buffer) {
+            Ok(v) => v,
+            Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+        };
+        println!("{:?}", s);
+
+        // let test = ostree::Repo::read_commit(repo, checksum, cancellable);
+        // println!("{:?}", test);
+        // use ostree_ext::prelude::OutputStreamExtManual;
+        // let mut output_stream = input_stream.read(count, cancellable).unwrap();
         let fetched_digest = fetched.manifest_digest.as_str();
         tracing::debug!("staged: {staged_digest:?}");
         tracing::debug!("fetched: {fetched_digest}");
