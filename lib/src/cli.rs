@@ -357,9 +357,20 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
     } else {
         let fetched = crate::deploy::pull(sysroot, imgref, opts.quiet).await?;
         let staged_digest = staged_image.as_ref().map(|s| s.image_digest.as_str());
+        println!("{:?}", fetched.as_ref());
+
+        let cancellable = gio::Cancellable::NONE;
+        let checksum = "68dd808f0703709ddd7c24b0191a32c8e6d569a249d7c0c714712db3914636c5";
+        let result = ostree::Repo::load_file(repo, checksum, cancellable);
+        println!("{:?}", result);
+
         let fetched_digest = fetched.manifest_digest.as_str();
         tracing::debug!("staged: {staged_digest:?}");
         tracing::debug!("fetched: {fetched_digest}");
+        let subdir: Option<&str> = None;
+        let refname = "ostree/1/0/0";
+        let diff = ostree_ext::diff::diff(repo, refname, fetched.ostree_commit.as_str(), subdir);
+        // println!("{:?}", diff);
         let staged_unchanged = staged_digest
             .map(|d| d == fetched_digest)
             .unwrap_or_default();
@@ -377,7 +388,18 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
             println!("No update available.")
         } else {
             let osname = booted_deployment.osname();
-            crate::deploy::stage(sysroot, &osname, &fetched, &spec).await?;
+
+            let mut opts = ostree::SysrootDeployTreeOpts::default();
+            
+            let kargs = vec!["console=tty"];
+            opts.override_kernel_argv = Some(kargs.as_slice());
+            println!("{:?}", kargs);
+
+            crate::deploy::stage(sysroot, &osname, &fetched, &spec, Some(opts)).await?;
+            // let paths = std::fs::read_dir("/ostree/deploy/fedora-coreos/deploy/ae58e24c1d38d8efde5bc4641c003829ed78e7b40faaa2babdac2dfd05bd7f3d.3/usr/lib/bootc/kargs.d").unwrap();
+            // for path in paths {
+            //     println!("Name: {}", path.unwrap().path().display())
+            // }
             changed = true;
             if let Some(prev) = booted_image.as_ref() {
                 if let Some(fetched_manifest) = fetched.get_manifest(repo)? {
@@ -390,7 +412,43 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
     }
     if changed {
         if opts.apply {
+            println!("ENTER");
+            let fragments = liboverdrop::scan(&["/usr/lib"], "bootc/kargs.d", &["toml"], true);
+            for (_name, path) in fragments {
+                println!("HELLO");
+                println!("{path:?}");
+                // let buf = std::fs::read_to_string(&path)?;
+                // let mut unused = std::collections::HashSet::new();
+                // let de = toml::Deserializer::new(&buf);
+                // let c: InstallConfigurationToplevel = serde_ignored::deserialize(de, |path| {
+                //     unused.insert(path.to_string());
+                // })
+                // .with_context(|| format!("Parsing {path:?}"))?;
+                // for key in unused {
+                //     eprintln!("warning: {path:?}: Unknown key {key}");
+                // }
+                // if let Some(config) = config.as_mut() {
+                //     if let Some(install) = c.install {
+                //         tracing::debug!("Merging install config: {install:?}");
+                //         config.merge(install);
+                //     }
+                // } else {
+                //     config = c.install;
+                // }
+            }
+            // we probably need to do something within the reboot stage
+            // in which the download of the image has already occured
+            // since we cannot use the fact that we're installing
+            // from the same image we're rebasing to, as with
+            // bootc install
+            // reboot is only called in this function, so we should be
+            // okay to change it
+            // actually, don't do it here because there is not application
+            // of data here. We either look to see where the manifest
+            // is downloaded and see if we can get more info from that
+            // or follow through on what happens during the reboot.
             crate::reboot::reboot()?;
+            println!("EXIT");
         }
     } else {
         tracing::debug!("No changes");
@@ -413,6 +471,8 @@ async fn switch(opts: SwitchOpts) -> Result<()> {
     );
     let target = ostree_container::OstreeImageReference { sigverify, imgref };
     let target = ImageReference::from(target);
+    // let root = cap_std::fs::Dir::open_ambient_dir("/usr/lib/bootc/kargs.d", cap_std::ambient_authority())?;
+    // println!("{root:?}");
 
     // If we're doing an in-place mutation, we shortcut most of the rest of the work here
     if opts.mutate_in_place {
@@ -463,7 +523,7 @@ async fn switch(opts: SwitchOpts) -> Result<()> {
     }
 
     let stateroot = booted_deployment.osname();
-    crate::deploy::stage(sysroot, &stateroot, &fetched, &new_spec).await?;
+    crate::deploy::stage(sysroot, &stateroot, &fetched, &new_spec, None).await?;
 
     Ok(())
 }
@@ -496,7 +556,7 @@ async fn edit(opts: EditOpts) -> Result<()> {
     // TODO gc old layers here
 
     let stateroot = booted_deployment.osname();
-    crate::deploy::stage(sysroot, &stateroot, &fetched, &new_spec).await?;
+    crate::deploy::stage(sysroot, &stateroot, &fetched, &new_spec, None).await?;
 
     Ok(())
 }

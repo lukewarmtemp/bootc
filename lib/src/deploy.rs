@@ -33,6 +33,7 @@ pub(crate) struct RequiredHostSpec<'a> {
 }
 
 /// State of a locally fetched image
+#[derive(Debug)]
 pub(crate) struct ImageState {
     pub(crate) manifest_digest: String,
     pub(crate) version: Option<String>,
@@ -80,6 +81,7 @@ pub(crate) async fn new_importer(
     imgref: &ostree_container::OstreeImageReference,
 ) -> Result<ostree_container::store::ImageImporter> {
     let config = Default::default();
+    println!("Enter new_importer()");
     let mut imp = ostree_container::store::ImageImporter::new(repo, imgref, config).await?;
     imp.require_bootable();
     Ok(imp)
@@ -118,8 +120,11 @@ pub(crate) async fn pull(
     imgref: &ImageReference,
     quiet: bool,
 ) -> Result<Box<ImageState>> {
+    println!("Enter pull()");
     let repo = &sysroot.repo();
     let ostree_imgref = &OstreeImageReference::from(imgref.clone());
+    // let result = ostree_ext::tar::export_commit(repo, ostree_imgref.imgref.to_string().as_str(), None, options);
+    // println!("{:?}", result);
     let mut imp = new_importer(repo, ostree_imgref).await?;
     let prep = match imp.prepare().await? {
         PrepareResult::AlreadyPresent(c) => {
@@ -219,8 +224,10 @@ async fn deploy(
     stateroot: &str,
     image: &ImageState,
     origin: &glib::KeyFile,
+    opts: Option<ostree::SysrootDeployTreeOpts<'_>>,
 ) -> Result<()> {
     let stateroot = Some(stateroot);
+    let opts = opts.unwrap_or(Default::default());
     // Copy to move into thread
     let cancellable = gio::Cancellable::NONE;
     let _new_deployment = sysroot.stage_tree_with_options(
@@ -228,7 +235,7 @@ async fn deploy(
         image.ostree_commit.as_str(),
         Some(origin),
         merge_deployment,
-        &Default::default(),
+        &opts,
         cancellable,
     )?;
     Ok(())
@@ -253,6 +260,7 @@ pub(crate) async fn stage(
     stateroot: &str,
     image: &ImageState,
     spec: &RequiredHostSpec<'_>,
+    opts: Option<ostree::SysrootDeployTreeOpts<'_>>,
 ) -> Result<()> {
     let merge_deployment = sysroot.merge_deployment(Some(stateroot));
     let origin = origin_from_imageref(spec.image)?;
@@ -262,8 +270,11 @@ pub(crate) async fn stage(
         stateroot,
         image,
         &origin,
+        opts,
     )
     .await?;
+    println!("{:?}", sysroot);
+    println!("{}", stateroot);
     crate::deploy::cleanup(sysroot).await?;
     println!("Queued for next boot: {}", spec.image);
     if let Some(version) = image.version.as_deref() {
