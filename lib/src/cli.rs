@@ -357,10 +357,9 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
         }
     } else {
         let fetched = crate::deploy::pull(sysroot, imgref, opts.quiet).await?;
+        let mut kargs = crate::deploy::get_kargs(repo, fetched.as_ref())?;
         let staged_digest = staged_image.as_ref().map(|s| s.image_digest.as_str());
         let fetched_digest = fetched.manifest_digest.as_str();
-        let mut kargs = crate::deploy::get_kargs(repo, fetched.as_ref())?;
-
         tracing::debug!("staged: {staged_digest:?}");
         tracing::debug!("fetched: {fetched_digest}");
         let staged_unchanged = staged_digest

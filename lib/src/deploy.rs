@@ -36,7 +36,6 @@ pub(crate) struct RequiredHostSpec<'a> {
 }
 
 /// State of a locally fetched image
-#[derive(Debug)]
 pub(crate) struct ImageState {
     pub(crate) manifest_digest: String,
     pub(crate) version: Option<String>,
@@ -84,7 +83,6 @@ pub(crate) async fn new_importer(
     imgref: &ostree_container::OstreeImageReference,
 ) -> Result<ostree_container::store::ImageImporter> {
     let config = Default::default();
-    println!("Enter new_importer()");
     let mut imp = ostree_container::store::ImageImporter::new(repo, imgref, config).await?;
     imp.require_bootable();
     Ok(imp)
@@ -123,11 +121,8 @@ pub(crate) async fn pull(
     imgref: &ImageReference,
     quiet: bool,
 ) -> Result<Box<ImageState>> {
-    println!("Enter pull()");
     let repo = &sysroot.repo();
     let ostree_imgref = &OstreeImageReference::from(imgref.clone());
-    // let result = ostree_ext::tar::export_commit(repo, ostree_imgref.imgref.to_string().as_str(), None, options);
-    // println!("{:?}", result);
     let mut imp = new_importer(repo, ostree_imgref).await?;
     let prep = match imp.prepare().await? {
         PrepareResult::AlreadyPresent(c) => {
@@ -276,8 +271,6 @@ pub(crate) async fn stage(
         opts,
     )
     .await?;
-    println!("{:?}", sysroot);
-    println!("{}", stateroot);
     crate::deploy::cleanup(sysroot).await?;
     println!("Queued for next boot: {}", spec.image);
     if let Some(version) = image.version.as_deref() {
@@ -372,7 +365,6 @@ pub fn get_kargs(repo: &ostree::Repo, fetched: &ImageState) -> Result<Vec<String
         let name = fetched_info.name();
         let name = name.to_str().expect("UTF-8 ostree name");
         let path = format!("/{name}");
-        println!("{:?}", path);
         let fetched_child = fetched_child.downcast::<ostree::RepoFile>().expect("downcast");
         fetched_child.ensure_resolved()?;
         let fetched_contents_checksum = fetched_child.checksum();
