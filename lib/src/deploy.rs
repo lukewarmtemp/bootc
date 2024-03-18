@@ -358,10 +358,10 @@ pub fn get_kargs(repo: &ostree::Repo, fetched: &ImageState) -> Result<Vec<String
             return Ok(vec![]);
         }
     }
-    let queryattrs = "standard::name,standard::type";
-    let queryflags = gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS;
     
     let mut kargs = vec![];
+    let queryattrs = "standard::name,standard::type";
+    let queryflags = gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS;
     let fetched_iter = fetched_tree.enumerate_children(queryattrs, queryflags, cancellable)?;
     while let Some(fetched_info) = fetched_iter.next_file(cancellable)? {
         let fetched_child = fetched_iter.child(&fetched_info);
