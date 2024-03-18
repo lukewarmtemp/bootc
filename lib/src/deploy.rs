@@ -349,27 +349,17 @@ pub(crate) fn switch_origin_inplace(root: &Dir, imgref: &ImageReference) -> Resu
 
 pub fn get_kargs(repo: &ostree::Repo, fetched: &ImageState) -> Result<Vec<String>> {
     let cancellable = gio::Cancellable::NONE;
-    println!("A");
     let (fetched_tree, _) = repo.read_commit(fetched.ostree_commit.as_str(), cancellable)?;
-    println!("B");
     let fetched_tree = fetched_tree.resolve_relative_path("/usr/lib/bootc/kargs.d");
-    println!("C");
-    // let fetched_tree = match fetched_tree.resolve_relative_path("/usr/lib/bootc/kargs.d") {
-    //     Ok(file) => file,
-    //     Err() => {
-    //         return Ok(vec![]);
-    //     }
-    // }
-
     let fetched_tree = fetched_tree.downcast::<ostree::RepoFile>().expect("downcast");
-    println!("D");
-    fetched_tree.ensure_resolved()?;
-    println!("E");
-
+    match fetched_tree.ensure_resolved() {
+        std::result::Result::Ok(()) => {}
+        Err(_) => {
+            return Ok(vec![]);
+        }
+    }
     let queryattrs = "standard::name,standard::type";
-    println!("F");
     let queryflags = gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS;
-    println!("G");
     
     let mut kargs = vec![];
     let fetched_iter = fetched_tree.enumerate_children(queryattrs, queryflags, cancellable)?;
