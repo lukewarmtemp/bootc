@@ -382,8 +382,6 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
             let mut opts = ostree::SysrootDeployTreeOpts::default();
             let kargs: Vec<&str> = kargs.iter_mut().map(|s| { s.pop(); s.as_str() }).collect();
             opts.override_kernel_argv = Some(kargs.as_slice());
-            println!("{:?}", kargs);
-
             crate::deploy::stage(sysroot, &osname, &fetched, &spec, Some(opts)).await?;
             changed = true;
             if let Some(prev) = booted_image.as_ref() {
@@ -397,43 +395,7 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
     }
     if changed {
         if opts.apply {
-            println!("ENTER");
-            let fragments = liboverdrop::scan(&["/usr/lib"], "bootc/kargs.d", &["toml"], true);
-            for (_name, path) in fragments {
-                println!("HELLO");
-                println!("{path:?}");
-                // let buf = std::fs::read_to_string(&path)?;
-                // let mut unused = std::collections::HashSet::new();
-                // let de = toml::Deserializer::new(&buf);
-                // let c: InstallConfigurationToplevel = serde_ignored::deserialize(de, |path| {
-                //     unused.insert(path.to_string());
-                // })
-                // .with_context(|| format!("Parsing {path:?}"))?;
-                // for key in unused {
-                //     eprintln!("warning: {path:?}: Unknown key {key}");
-                // }
-                // if let Some(config) = config.as_mut() {
-                //     if let Some(install) = c.install {
-                //         tracing::debug!("Merging install config: {install:?}");
-                //         config.merge(install);
-                //     }
-                // } else {
-                //     config = c.install;
-                // }
-            }
-            // we probably need to do something within the reboot stage
-            // in which the download of the image has already occured
-            // since we cannot use the fact that we're installing
-            // from the same image we're rebasing to, as with
-            // bootc install
-            // reboot is only called in this function, so we should be
-            // okay to change it
-            // actually, don't do it here because there is not application
-            // of data here. We either look to see where the manifest
-            // is downloaded and see if we can get more info from that
-            // or follow through on what happens during the reboot.
             crate::reboot::reboot()?;
-            println!("EXIT");
         }
     } else {
         tracing::debug!("No changes");
@@ -456,8 +418,6 @@ async fn switch(opts: SwitchOpts) -> Result<()> {
     );
     let target = ostree_container::OstreeImageReference { sigverify, imgref };
     let target = ImageReference::from(target);
-    // let root = cap_std::fs::Dir::open_ambient_dir("/usr/lib/bootc/kargs.d", cap_std::ambient_authority())?;
-    // println!("{root:?}");
 
     // If we're doing an in-place mutation, we shortcut most of the rest of the work here
     if opts.mutate_in_place {
