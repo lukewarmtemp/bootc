@@ -358,40 +358,11 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
     } else {
         let fetched = crate::deploy::pull(sysroot, imgref, opts.quiet).await?;
         let staged_digest = staged_image.as_ref().map(|s| s.image_digest.as_str());
-        println!("{:?}", fetched.as_ref());
-
-        let cancellable = gio::Cancellable::NONE;
-        let checksum = "68dd808f0703709ddd7c24b0191a32c8e6d569a249d7c0c714712db3914636c5";
-        // Ok((_, file_info, _)) => {
-        
-        // }
-        // let Ok((stream, content), error) = ostree::Repo::load_file(repo, checksum, cancellable);
-        let output = ostree::Repo::load_file(repo, checksum, cancellable).unwrap();
-        let content = output.0;
-        println!("{:?}", content);
-
-        use ostree_ext::prelude::InputStreamExtManual;
-        use std::io::Read;
-        let mut buffer = Vec::new();
-        let mut reader = content.unwrap().into_read();
-        reader.read_to_end(&mut buffer)?;
-        let s = match std::str::from_utf8(&buffer) {
-            Ok(v) => v,
-            Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-        };
-        println!("{:?}", s);
-
-        // let test = ostree::Repo::read_commit(repo, checksum, cancellable);
-        // println!("{:?}", test);
-        // use ostree_ext::prelude::OutputStreamExtManual;
-        // let mut output_stream = input_stream.read(count, cancellable).unwrap();
         let fetched_digest = fetched.manifest_digest.as_str();
+        let mut kargs = crate::deploy::get_kargs(repo, fetched.as_ref())?;
+
         tracing::debug!("staged: {staged_digest:?}");
         tracing::debug!("fetched: {fetched_digest}");
-        let subdir: Option<&str> = None;
-        let refname = "ostree/1/0/0";
-        let diff = ostree_ext::diff::diff(repo, refname, fetched.ostree_commit.as_str(), subdir);
-        // println!("{:?}", diff);
         let staged_unchanged = staged_digest
             .map(|d| d == fetched_digest)
             .unwrap_or_default();
@@ -409,18 +380,12 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
             println!("No update available.")
         } else {
             let osname = booted_deployment.osname();
-
             let mut opts = ostree::SysrootDeployTreeOpts::default();
-            
-            let kargs = vec!["console=tty"];
+            let kargs: Vec<&str> = kargs.iter_mut().map(|s| { s.pop(); s.as_str() }).collect();
             opts.override_kernel_argv = Some(kargs.as_slice());
             println!("{:?}", kargs);
 
             crate::deploy::stage(sysroot, &osname, &fetched, &spec, Some(opts)).await?;
-            // let paths = std::fs::read_dir("/ostree/deploy/fedora-coreos/deploy/ae58e24c1d38d8efde5bc4641c003829ed78e7b40faaa2babdac2dfd05bd7f3d.3/usr/lib/bootc/kargs.d").unwrap();
-            // for path in paths {
-            //     println!("Name: {}", path.unwrap().path().display())
-            // }
             changed = true;
             if let Some(prev) = booted_image.as_ref() {
                 if let Some(fetched_manifest) = fetched.get_manifest(repo)? {

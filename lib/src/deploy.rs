@@ -16,6 +16,9 @@ use ostree_ext::container::store::PrepareResult;
 use ostree_ext::ostree;
 use ostree_ext::ostree::Deployment;
 use ostree_ext::sysroot::SysrootLock;
+use ostree_ext::prelude::FileExt;
+use ostree_ext::prelude::Cast;
+use ostree_ext::prelude::FileEnumeratorExt;
 
 use crate::spec::HostSpec;
 use crate::spec::ImageReference;
@@ -349,6 +352,40 @@ pub(crate) fn switch_origin_inplace(root: &Dir, imgref: &ImageReference) -> Resu
         .atomic_write(&origin_path, serialized_origin.as_bytes())
         .context("Writing origin")?;
     Ok(newest_deployment)
+}
+
+pub fn get_kargs(repo: &ostree::Repo, fetched: &ImageState) -> Result<Vec<String>> {
+    let cancellable = gio::Cancellable::NONE;
+    let (fetched_tree, _) = repo.read_commit(fetched.ostree_commit.as_str(), cancellable)?;
+    let fetched_tree = fetched_tree.resolve_relative_path("/usr/lib/bootc/kargs.d");
+
+    let fetched_tree = fetched_tree.downcast::<ostree::RepoFile>().expect("downcast");
+    fetched_tree.ensure_resolved()?;
+
+    let queryattrs = "standard::name,standard::type";
+    let queryflags = gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS;
+    
+    let mut kargs = vec![];
+    let fetched_iter = fetched_tree.enumerate_children(queryattrs, queryflags, cancellable)?;
+    while let Some(fetched_info) = fetched_iter.next_file(cancellable)? {
+        let fetched_child = fetched_iter.child(&fetched_info);
+        let name = fetched_info.name();
+        let name = name.to_str().expect("UTF-8 ostree name");
+        let path = format!("/{name}");
+        println!("{:?}", path);
+        let fetched_child = fetched_child.downcast::<ostree::RepoFile>().expect("downcast");
+        fetched_child.ensure_resolved()?;
+        let fetched_contents_checksum = fetched_child.checksum();
+
+        let f = ostree::Repo::load_file(repo, fetched_contents_checksum.as_str(), cancellable).unwrap();
+        let file_content = f.0;
+        let mut buffer = vec![];
+        let mut reader = ostree_ext::prelude::InputStreamExtManual::into_read(file_content.unwrap());
+        let _ = std::io::Read::read_to_end(&mut reader, &mut buffer);
+        let s = std::string::String::from_utf8(buffer)?;
+        kargs.push(s);
+    }
+    Ok(kargs)
 }
 
 #[test]
