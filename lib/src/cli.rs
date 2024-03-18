@@ -2,6 +2,7 @@
 //!
 //! Command line tool to manage bootable ostree-based containers.
 
+use anstream::println;
 use anyhow::{Context, Result};
 use camino::Utf8PathBuf;
 use cap_std_ext::cap_std;
@@ -12,6 +13,9 @@ use ostree_container::store::PrepareResult;
 use ostree_ext::container as ostree_container;
 use ostree_ext::keyfileext::KeyFileExt;
 use ostree_ext::ostree;
+use ostree_ext::prelude::Cast;
+use ostree_ext::prelude::FileExt;
+use ostree_ext::prelude::FileEnumeratorExt;
 use std::ffi::OsString;
 use std::io::Seek;
 use std::os::unix::process::CommandExt;
@@ -360,37 +364,41 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
         println!("{:?}", fetched.as_ref());
 
         let cancellable = gio::Cancellable::NONE;
-        let checksum = "68dd808f0703709ddd7c24b0191a32c8e6d569a249d7c0c714712db3914636c5";
-        // Ok((_, file_info, _)) => {
+        let (fetched_tree, _) = repo.read_commit(fetched.ostree_commit.as_str(), cancellable)?;
+        let fetched_tree = fetched_tree.resolve_relative_path("/usr/lib/bootc/kargs.d");
+
+        let fetched_tree = fetched_tree.downcast::<ostree::RepoFile>().expect("downcast");
+        fetched_tree.ensure_resolved()?;
+
+        let queryattrs = "standard::name,standard::type";
+        let queryflags = gio::FileQueryInfoFlags::NOFOLLOW_SYMLINKS;
         
-        // }
-        // let Ok((stream, content), error) = ostree::Repo::load_file(repo, checksum, cancellable);
-        let output = ostree::Repo::load_file(repo, checksum, cancellable).unwrap();
-        let content = output.0;
-        println!("{:?}", content);
+        let mut kargs = vec![];
+        let fetched_iter = fetched_tree.enumerate_children(queryattrs, queryflags, cancellable)?;
+        while let Some(fetched_info) = fetched_iter.next_file(cancellable)? {
+            let fetched_child = fetched_iter.child(&fetched_info);
+            let name = fetched_info.name();
+            let name = name.to_str().expect("UTF-8 ostree name");
+            let path = format!("/{name}");
+            println!("{:?}", path);
+            let fetched_child = fetched_child.downcast::<ostree::RepoFile>().expect("downcast");
+            fetched_child.ensure_resolved()?;
+            let fetched_contents_checksum = fetched_child.checksum();
 
-        use ostree_ext::prelude::InputStreamExtManual;
-        use std::io::Read;
-        let mut buffer = Vec::new();
-        let mut reader = content.unwrap().into_read();
-        reader.read_to_end(&mut buffer)?;
-        let s = match std::str::from_utf8(&buffer) {
-            Ok(v) => v,
-            Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-        };
-        println!("{:?}", s);
-
-        // let test = ostree::Repo::read_commit(repo, checksum, cancellable);
-        // println!("{:?}", test);
-        // use ostree_ext::prelude::OutputStreamExtManual;
-        // let mut output_stream = input_stream.read(count, cancellable).unwrap();
+            let f = ostree::Repo::load_file(repo, fetched_contents_checksum.as_str(), cancellable).unwrap();
+            let file_content = f.0;
+            let mut buffer = vec![];
+            let mut reader = ostree_ext::prelude::InputStreamExtManual::into_read(file_content.unwrap());
+            let _ = std::io::Read::read_to_end(&mut reader, &mut buffer);
+            let s = match std::string::String::from_utf8(buffer) {
+                Ok(v) => v,
+                Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
+            };
+            kargs.push(s);
+        }
         let fetched_digest = fetched.manifest_digest.as_str();
         tracing::debug!("staged: {staged_digest:?}");
         tracing::debug!("fetched: {fetched_digest}");
-        let subdir: Option<&str> = None;
-        let refname = "ostree/1/0/0";
-        let diff = ostree_ext::diff::diff(repo, refname, fetched.ostree_commit.as_str(), subdir);
-        // println!("{:?}", diff);
         let staged_unchanged = staged_digest
             .map(|d| d == fetched_digest)
             .unwrap_or_default();
@@ -408,18 +416,11 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
             println!("No update available.")
         } else {
             let osname = booted_deployment.osname();
-
             let mut opts = ostree::SysrootDeployTreeOpts::default();
-            
-            let kargs = vec!["console=tty"];
+            let kargs: Vec<&str> = kargs.iter_mut().map(|s| { s.pop(); s.as_str() }).collect();
             opts.override_kernel_argv = Some(kargs.as_slice());
-            println!("{:?}", kargs);
-
+            // println!("{:?}", kargs);
             crate::deploy::stage(sysroot, &osname, &fetched, &spec, Some(opts)).await?;
-            // let paths = std::fs::read_dir("/ostree/deploy/fedora-coreos/deploy/ae58e24c1d38d8efde5bc4641c003829ed78e7b40faaa2babdac2dfd05bd7f3d.3/usr/lib/bootc/kargs.d").unwrap();
-            // for path in paths {
-            //     println!("Name: {}", path.unwrap().path().display())
-            // }
             changed = true;
             if let Some(prev) = booted_image.as_ref() {
                 if let Some(fetched_manifest) = fetched.get_manifest(repo)? {
@@ -432,43 +433,7 @@ async fn upgrade(opts: UpgradeOpts) -> Result<()> {
     }
     if changed {
         if opts.apply {
-            println!("ENTER");
-            let fragments = liboverdrop::scan(&["/usr/lib"], "bootc/kargs.d", &["toml"], true);
-            for (_name, path) in fragments {
-                println!("HELLO");
-                println!("{path:?}");
-                // let buf = std::fs::read_to_string(&path)?;
-                // let mut unused = std::collections::HashSet::new();
-                // let de = toml::Deserializer::new(&buf);
-                // let c: InstallConfigurationToplevel = serde_ignored::deserialize(de, |path| {
-                //     unused.insert(path.to_string());
-                // })
-                // .with_context(|| format!("Parsing {path:?}"))?;
-                // for key in unused {
-                //     eprintln!("warning: {path:?}: Unknown key {key}");
-                // }
-                // if let Some(config) = config.as_mut() {
-                //     if let Some(install) = c.install {
-                //         tracing::debug!("Merging install config: {install:?}");
-                //         config.merge(install);
-                //     }
-                // } else {
-                //     config = c.install;
-                // }
-            }
-            // we probably need to do something within the reboot stage
-            // in which the download of the image has already occured
-            // since we cannot use the fact that we're installing
-            // from the same image we're rebasing to, as with
-            // bootc install
-            // reboot is only called in this function, so we should be
-            // okay to change it
-            // actually, don't do it here because there is not application
-            // of data here. We either look to see where the manifest
-            // is downloaded and see if we can get more info from that
-            // or follow through on what happens during the reboot.
             crate::reboot::reboot()?;
-            println!("EXIT");
         }
     } else {
         tracing::debug!("No changes");
