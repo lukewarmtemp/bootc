@@ -47,6 +47,7 @@ pub(crate) struct InstallConfiguration {
     /// Kernel arguments, applied at installation time
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) kargs: Option<Vec<String>>,
+    pub(crate) arch: Option<Vec<String>>,
 }
 
 fn merge_basic<T>(s: &mut Option<T>, o: Option<T>) {
@@ -100,9 +101,21 @@ impl Mergeable for InstallConfiguration {
         merge_basic(&mut self.block, other.block);
         self.filesystem.merge(other.filesystem);
         if let Some(other_kargs) = other.kargs {
-            self.kargs
-                .get_or_insert_with(Default::default)
-                .extend(other_kargs)
+            // if arch is specified, only apply kargs if it matches the current arch
+            // if arch is not specified, apply kargs unconditionally
+            if let Some(other_arch) = other.arch {
+                for arch in other_arch.iter() {
+                    if arch == std::env::consts::ARCH {
+                        self.kargs
+                            .get_or_insert_with(Default::default)
+                            .extend(other_kargs.clone())
+                    }
+                }
+            } else {
+                self.kargs
+                    .get_or_insert_with(Default::default)
+                    .extend(other_kargs)
+            }
         }
     }
 }
@@ -318,4 +331,206 @@ block = ["tpm2-luks"]"##,
 
     // And verify passing a disallowed config is an error
     assert!(install.get_block_setup(Some(BlockSetup::Direct)).is_err());
+}
+
+#[test]
+/// Verify that kargs are only applied to supported architectures
+fn test_arch() {
+    // no arch specified, kargs ensure that kargs are applied unconditionally
+    std::env::set_var("ARCH", "x86_64");
+    let c: InstallConfigurationToplevel = toml::from_str(
+        r##"[install]
+root-fs-type = "xfs"
+"##,
+    )
+    .unwrap();
+    let mut install = c.install.unwrap();
+    let other = InstallConfigurationToplevel {
+        install: Some(InstallConfiguration {
+            kargs: Some(
+                ["console=tty0", "nosmt"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+    };
+    install.merge(other.install.unwrap());
+    assert_eq!(
+        install.kargs,
+        Some(
+            ["console=tty0", "nosmt"]
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect()
+        )
+    );
+    std::env::set_var("ARCH", "aarch64");
+    let c: InstallConfigurationToplevel = toml::from_str(
+        r##"[install]
+root-fs-type = "xfs"
+"##,
+    )
+    .unwrap();
+    let mut install = c.install.unwrap();
+    let other = InstallConfigurationToplevel {
+        install: Some(InstallConfiguration {
+            kargs: Some(
+                ["console=tty0", "nosmt"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+    };
+    install.merge(other.install.unwrap());
+    assert_eq!(
+        install.kargs,
+        Some(
+            ["console=tty0", "nosmt"]
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect()
+        )
+    );
+
+    // one arch matches and one doesn't, ensure that kargs are only applied for the matching arch
+    std::env::set_var("ARCH", "x86_64");
+    let c: InstallConfigurationToplevel = toml::from_str(
+        r##"[install]
+root-fs-type = "xfs"
+"##,
+    )
+    .unwrap();
+    let mut install = c.install.unwrap();
+    let other = InstallConfigurationToplevel {
+        install: Some(InstallConfiguration {
+            kargs: Some(
+                ["console=ttyS0", "foo=bar"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            arch: Some(
+                ["x86_64"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+    };
+    install.merge(other.install.unwrap());
+    assert_eq!(
+        install.kargs,
+        Some(
+            ["console=ttyS0", "foo=bar"]
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect()
+        )
+    );
+    let other = InstallConfigurationToplevel {
+        install: Some(InstallConfiguration {
+            kargs: Some(
+                ["console=tty0", "nosmt"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            arch: Some(
+                ["aarch64"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+    };
+    install.merge(other.install.unwrap());
+    assert_eq!(
+        install.kargs,
+        Some(
+            ["console=ttyS0", "foo=bar"]
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect()
+        )
+    );
+
+    // multiple arch specified, ensure that kargs are applied to both archs
+    std::env::set_var("ARCH", "x86_64");
+    let c: InstallConfigurationToplevel = toml::from_str(
+        r##"[install]
+root-fs-type = "xfs"
+"##,
+    )
+    .unwrap();
+    let mut install = c.install.unwrap();
+    let other = InstallConfigurationToplevel {
+        install: Some(InstallConfiguration {
+            kargs: Some(
+                ["console=tty0", "nosmt"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            arch: Some(
+                ["x86_64", "aarch64"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+    };
+    std::env::set_var("ARCH", "x86_64");
+    install.merge(other.install.unwrap());
+    assert_eq!(
+        install.kargs,
+        Some(
+            ["console=tty0", "nosmt"]
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect()
+        )
+    );
+    std::env::set_var("ARCH", "aarch64");
+    let c: InstallConfigurationToplevel = toml::from_str(
+        r##"[install]
+root-fs-type = "xfs"
+"##,
+    )
+    .unwrap();
+    let mut install = c.install.unwrap();
+    let other = InstallConfigurationToplevel {
+        install: Some(InstallConfiguration {
+            kargs: Some(
+                ["console=tty0", "nosmt"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            arch: Some(
+                ["x86_64", "aarch64"]
+                    .into_iter()
+                    .map(ToOwned::to_owned)
+                    .collect(),
+            ),
+            ..Default::default()
+        }),
+    };
+    std::env::set_var("ARCH", "x86_64");
+    install.merge(other.install.unwrap());
+    assert_eq!(
+        install.kargs,
+        Some(
+            ["console=tty0", "nosmt"]
+                .into_iter()
+                .map(ToOwned::to_owned)
+                .collect()
+        )
+    );
 }

@@ -19,6 +19,7 @@
 
 pub mod cli;
 pub(crate) mod deploy;
+pub(crate) mod kargs;
 pub(crate) mod generator;
 pub(crate) mod journal;
 mod lsm;
